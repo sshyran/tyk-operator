@@ -20,9 +20,10 @@ import (
 	"flag"
 	"os"
 
+	"github.com/TykTechnologies/tyk-operator/internal/dashboard_client"
+
 	tykv1 "github.com/TykTechnologies/tyk-operator/api/v1"
 	"github.com/TykTechnologies/tyk-operator/controllers"
-	"github.com/TykTechnologies/tyk-operator/internal/gateway_client"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -76,14 +77,19 @@ func main() {
 		os.Exit(1)
 	}
 
-	client := gateway_client.NewClient("http://localhost:8000", "foo", true)
-	//client := dashboard_client.NewClient("http://localhost:3000", "de2fc79499804c7072372b859e712b82", true)
+	//client := gateway_client.NewClient("http://2d091b7c3997.ngrok.io", "foo", true, "acme.com")
+	client := dashboard_client.NewClient(
+		"http://localhost:3000",
+		"de2fc79499804c7072372b859e712b82",
+		true,
+		"5d67b96d767e02015ea84a6f")
 
 	if err = (&controllers.ApiDefinitionReconciler{
 		Client:          mgr.GetClient(),
 		Log:             ctrl.Log.WithName("controllers").WithName("ApiDefinition"),
 		Scheme:          mgr.GetScheme(),
 		UniversalClient: client,
+		Recorder:        mgr.GetEventRecorderFor("apidefinition-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "ApiDefinition")
 		os.Exit(1)
@@ -94,6 +100,7 @@ func main() {
 		Log:             ctrl.Log.WithName("controllers").WithName("SecurityPolicy"),
 		Scheme:          mgr.GetScheme(),
 		UniversalClient: client,
+		Recorder:        mgr.GetEventRecorderFor("apidefinition-controller"),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "SecurityPolicy")
 		os.Exit(1)
