@@ -25,19 +25,30 @@ customresourcedefinition.apiextensions.k8s.io/securitypolicies.tyk.tyk.io create
 customresourcedefinition.apiextensions.k8s.io/webhooks.tyk.tyk.io created
 ```
 
-3. Deploy the operator
+3. Setup
 
-3a. OPTIONAL: Override the namespace the operator is to be deployed in
+3a. Make sure you have cert-manager deployed
+
+> :pencil2: **Note** If you have enabled webhooks in your deployments, you will need to have cert-manager already 
+> installed in the cluster or make deploy will fail when creating the cert-manager resources. 
+> See [Cert-Manager Installation](https://cert-manager.io/docs/installation/kubernetes/) for full docs.
+
+```bash
+kubectl apply --validate=false -f https://github.com/jetstack/cert-manager/releases/download/v1.0.2/cert-manager.yaml
+```
+
+3b. OPTIONAL: Override the namespace the operator is to be deployed in
 ```bash
 cd config/default/ && kustomize edit set namespace "changeme" && cd ../..
 ```
 
-3b. Deploy the operator. This will also install the RBAC manifests from `config/rbac`.
-```
+4. Deploy the operator.
+
+This will also install the RBAC manifests from `config/rbac`.
+
+```bash
 make deploy IMG=tykio/tyk-operator:latest
 ```
-
-
 
 ## Cleanup
 

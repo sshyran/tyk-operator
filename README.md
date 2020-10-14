@@ -4,12 +4,20 @@ The Tyk Operator is the [operator-sdk](https://github.com/operator-framework/ope
 environment via k8s native tooling.
 
 Tyk objects available as [CRDs](https://kubernetes.io/docs/concepts/extend-kubernetes/api-extension/custom-resources/):
+
 - [API definitions](./docs/api_definitions.md)
 - [Security Policies](./docs/policies.md)
+- [WebHooks](./docs/webhooks.md)
 
 ![Demo](./docs/img/demo.svg)
 
+## Installation
+
+- [Installation Guide](./docs/install.md)
+
 ## Sample Configurations
+
+Further examples available in (config/samples)[./config/samples]
 
 ### HTTP Proxy
 
