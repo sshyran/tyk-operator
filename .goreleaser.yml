@@ -13,6 +13,12 @@ checksum:
 builds:
   - skip: false
 
+release:
+  mode: append
+  extra_files:
+    - glob: ./helm/crds/crds.yaml
+      name_template: crds.yaml
+
 # https://goreleaser.com/customization/docker/
 dockers:
   - image_templates:
