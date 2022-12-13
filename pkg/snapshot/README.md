@@ -23,7 +23,7 @@ Please use with caution.
 ## Prerequisites
 
 1. Access to `tyk-operator` repository.
-2. [go](https://go.dev/doc/install)
+2. [go 1.17.x](https://go.dev/dl/)
 3. Credentials to connect Tyk Dashboard or Gateway. Please visit [Tyk Docs](https://tyk.io/docs/tyk-stack/tyk-operator/installing-tyk-operator) for details.
 
 ## Installation
