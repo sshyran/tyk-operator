@@ -140,15 +140,14 @@ func (r *TykOasApiDefinitionReconciler) createOrUpdateTykOASAPI(ctx context.Cont
 ) {
 	var cm v1.ConfigMap
 
-	confMapNs := tykOASCrd.Spec.TykOAS.ConfigmapRef.Namespace
-
-	ns := types.NamespacedName{
-		Name: tykOASCrd.Spec.TykOAS.ConfigmapRef.Name,
+	configMapNs := tykOASCrd.Spec.TykOAS.ConfigmapRef.Namespace
+	if configMapNs == "" {
+		configMapNs = tykOASCrd.Namespace
 	}
 
-	ns.Namespace = confMapNs
-	if confMapNs == "" {
-		ns.Namespace = tykOASCrd.Namespace
+	ns := types.NamespacedName{
+		Name:      tykOASCrd.Spec.TykOAS.ConfigmapRef.Name,
+		Namespace: configMapNs,
 	}
 
 	err := r.Client.Get(ctx, ns, &cm)
@@ -203,15 +202,14 @@ func (r *TykOasApiDefinitionReconciler) updateStatus(ctx context.Context, tykOAS
 		tykOASCrd.Status.ID = apiID
 	}
 
-	confMapNs := tykOASCrd.Spec.TykOAS.ConfigmapRef.Namespace
-
-	cmNS := types.NamespacedName{
-		Name: tykOASCrd.Spec.TykOAS.ConfigmapRef.Name,
+	configMapNs := tykOASCrd.Spec.TykOAS.ConfigmapRef.Namespace
+	if configMapNs == "" {
+		configMapNs = tykOASCrd.Namespace
 	}
 
-	cmNS.Namespace = confMapNs
-	if confMapNs == "" {
-		cmNS.Namespace = tykOASCrd.Namespace
+	cmNS := types.NamespacedName{
+		Name:      tykOASCrd.Spec.TykOAS.ConfigmapRef.Name,
+		Namespace: configMapNs,
 	}
 
 	err := r.Client.Get(ctx, cmNS, &cm)
