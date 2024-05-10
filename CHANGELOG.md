@@ -1,7 +1,153 @@
 # Changelog
 
 ## [Unreleased](https://github.com/TykTechnologies/tyk-operator/tree/HEAD)
-[Full Changelog](https://github.com/TykTechnologies/tyk-operator/compare/v0.12.0...HEAD)
+[Full Changelog](https://github.com/TykTechnologies/tyk-operator/compare/v0.17.1...HEAD)
+
+## [v0.17.1](https://github.com/TykTechnologies/tyk-operator/tree/v0.17.1)
+[Full Changelog](https://github.com/TykTechnologies/tyk-operator/compare/v0.17.0...v0.17.1)
+
+**Added**:
+- Added new fields in Tyk Operator helm chart to configure RBAC and Webhook ports.
+
+**Fixed**:
+- Fixed CVE-2023-45288
+- Fixed CVE-2024-24786
+- Fixed missing OrgID field in ApiDefinition template CRs created by Ingress Controller.
+- (samples): Patched GraphQL engine version in the GraphQL proxy examples.
+- (samples): update ClusterIssuer samples
+
+## [v0.17.0](https://github.com/TykTechnologies/tyk-operator/tree/v0.17.0)
+[Full Changelog](https://github.com/TykTechnologies/tyk-operator/compare/v0.16.0...v0.17.0)
+
+**Updated**:
+- Updated Kubernetes versions used in CI for testing to ["v1.25.0", "v1.26.0", "v1.27.0", "v1.28.0", "v1.29.0"]
+
+**Fixed**:
+- Fix creating duplicated APIDefinitions on Tyk in case of cluster failures. If network errors happen while updating the 
+APIDefinition, Tyk Operator retries the reconciliation based on the underlying error type [#679](https://github.com/TykTechnologies/tyk-operator/pull/679)
+
+## [v0.16.0](https://github.com/TykTechnologies/tyk-operator/tree/v0.16.0)
+[Full Changelog](https://github.com/TykTechnologies/tyk-operator/compare/v0.15.1...v0.16.0)
+
+**Fixed**:
+- Fixed a bug that prevents Tyk Operator to work with SecurityPolicy in CE (OSS) Mode.
+Now, SecurityPolicy controller will not modify `spec.MID` (`_id`) field in SecurityPolicy.
+
+**Added**:
+- Added `imagePullSecrets` configuration for ServiceAccount in Tyk Operator Helm chart 
+- Added `tyk` to `categories` field of CRDs. So, from now on, all CRs related to Tyk Operator is grouped
+into `tyk` category and can be displayed via `kubectl get tyk`.
+- Added support of analytics plugin
+- Added `global_headers` support for UDG API Definition
+- Added `detailed_tracing` of APIDefinition for OpenTelemetry
+
+**Updated**
+- Updated Go version to 1.21
+
+## [v0.15.1](https://github.com/TykTechnologies/tyk-operator/tree/v0.15.1)
+[Full Changelog](https://github.com/TykTechnologies/tyk-operator/compare/v0.15.0...v0.15.1)
+
+**Fixed**:
+- Fixed typo in environment package name
+
+**Changed**:
+- Updated golang.org/x/net to v0.13.0
+
+## [v0.15.0](https://github.com/TykTechnologies/tyk-operator/tree/v0.15.0)
+[Full Changelog](https://github.com/TykTechnologies/tyk-operator/compare/v0.14.2...v0.15.0)
+
+**Added**
+- Added `disabled` feature in `validate_json` field of APIDefinition. 
+- Added a new Status resource called `latestTransaction` to the APIDefinition CRD which holds information about 
+last reconciliation. Now, any error can be observed there instead of checking Tyk Operator logs.
+- Added an option to enable `ServiceMonitor` in helm charts, in order Prometheus Operator to scrape `/metrics` endpoint.
+- Added `extraVolume` and `extraVolumeMounts` options to the helm chart. So, extra volumes can be mounted in Tyk Operator's manager pod, e.g., self-signed certificates.
+
+
+**Fixed**
+- Check if certificate already exists on tyk before uploading
+- Operator throwing lots of errors "the object has been modified; please apply your changes to the latest version and try again" while reconciling security policy
+
+## [0.14.2](https://github.com/TykTechnologies/tyk-operator/tree/v0.14.2)
+[Full Changelog](https://github.com/TykTechnologies/tyk-operator/compare/v0.14.1...v0.14.2)
+
+**Fixed**
+- Fixed panic of snapshot tool
+
+**Changed**
+- Changed optional fields of type string and bool to pointers for APIDefinition and Security Policy Custom Resources
+- Updated `.spec.graphql.supergraph.subgraphs[].headers` field to allow null values for validation. In the previous
+versions of Tyk such as v4.0 where `.spec.graphql.supergraph.subgraphs[].headers` is not supported, exporting such 
+resources by using Snapshot tool, sets these values to null since they are not introduced in v4.0. Allow `headers`
+field to accept `null` values to overcome validation issues.
+
+**Added**
+- Added possibility to set base identity provider
+- Added two new Status fields to ApiDefinition and Security Policy CRDs - `latestTykSpecHash` and `latestCRDSpecHash` 
+to store hash of the lastly reconciled resources. It will be used in comparison to determine sending Update calls
+to Tyk Gateway or Dashboard or not.
+
+## [v0.14.1](https://github.com/TykTechnologies/tyk-operator/tree/v0.14.1)
+[Full Changelog](https://github.com/TykTechnologies/tyk-operator/compare/v0.14.0...v0.14.1)
+
+**Fixed**:
+- Operator removes `spec.contextRef` from SecurityPolicy CRs.
+- Fixed panic happening when adding an ApiDefinition and Ingress with HTTPS when operator talked to OSS gateway
+
+**Updated**:
+- Run tests against latest k8s(v1.26.3) and tyk versions(v5.0)
+- Updated go version from 1.17 to 1.19
+
+**Removed**:
+- Operator is no longer tested against k8s v1.19.16
+
+## [v0.14.0](https://github.com/TykTechnologies/tyk-operator/tree/v0.14.0)
+[Full Changelog](https://github.com/TykTechnologies/tyk-operator/compare/v0.13.0...v0.14.0)
+
+**Updated**:
+- Test each PR against Tyk v4.0 as well.
+- Allow Snapshot tool to filter by category regardless of the flags set
+- Documentation of snapshot tool, in order to explain how to use Snapshot with Docker.
+- Remove hardcoded TLS keys from integration tests to prevent possible CI failures.
+
+**Added**
+
+- Added hostNetwork Support [Issue #532](https://github.com/TykTechnologies/tyk-operator/issues/532)
+- snapshot tool can be used with Docker images. 
+- snapshot tool can now export only SecurityPolicy objects without specifying
+  additional flag for ApiDefinition export.
+- Publish docker image for arm64 too during release.
+
+**Fixed**:
+- Remove ORGID from SecurityPolicy CRs while using Snapshot tool [#577](https://github.com/TykTechnologies/tyk-operator/pull/577).
+- Prevent reading Kubernetes config while using `operator snapshot` as a CLI command
+(this means you don't need to have a running Kubernetes cluster when running `operator snapshot`).
+- Fixed reconciliation failures when ApiDefinition does not exist on Tyk storage.
+- Fixed BDD tests dependency of `curl`. Instead of running `curl` within a container,
+implemented a port-forward mechanism to send raw HTTP requests to pods.
+- Fixed extra Update calls to Tyk GW / Dashboard. If no changes are made to 
+ApiDefinition resource, Operator won't send a request to Tyk GW / Dashboard.
+- Updated `control-plane` labels from `controller-manager` to `tyk-operator-controller-manager`
+to avoid selector issues.
+
+
+## [v0.13.0](https://github.com/TykTechnologies/tyk-operator/tree/v0.13.0)
+[Full Changelog](https://github.com/TykTechnologies/tyk-operator/compare/v0.12.0...v0.13.0)
+
+**Updated**
+- Added new field `LinkedAPIs` in status of security policies.
+
+**Added**
+- Added Basic Authentication support [Issue #534](https://github.com/TykTechnologies/tyk-operator/issues/534)
+- Added support for security policies in OSS [#357](https://github.com/TykTechnologies/tyk-operator/issues/357)
+- Added nodeSelector support [Issue #551](https://github.com/TykTechnologies/tyk-operator/issues/551)
+- Added support to policy fields that apply to GraphQL.
+
+**Fixed**
+- Attempting to remove an ApiDefinition fails if previously associated to a SecurityPolicy [#431](https://github.com/TykTechnologies/tyk-operator/issues/431)
+- Operator was failing to remove finalizers from ApiDefinition that was already deleted in Dashboard [#469](https://github.com/TykTechnologies/tyk-operator/issues/469)
+- Fixed the problem of linking existing security policies while migration [#204](https://github.com/TykTechnologies/tyk-operator/issues/204)
+- Fix Security Policy tests
 
 ## [v0.12.0](https://github.com/TykTechnologies/tyk-operator/tree/v0.12.0)
 [Full Changelog](https://github.com/TykTechnologies/tyk-operator/compare/v0.11.0...v0.12.0)

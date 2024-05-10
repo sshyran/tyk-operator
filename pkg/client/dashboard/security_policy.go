@@ -32,7 +32,7 @@ func (p SecurityPolicy) All(ctx context.Context) ([]v1.SecurityPolicySpec, error
 	return response.Policies, nil
 }
 
-// Get  find the Policy by id
+// Get find the Policy by id.
 func (p SecurityPolicy) Get(ctx context.Context, id string) (*v1.SecurityPolicySpec, error) {
 	res, err := client.Get(ctx, client.Join(endpointPolicies, id), nil)
 	if err != nil {
@@ -50,7 +50,7 @@ func (p SecurityPolicy) Get(ctx context.Context, id string) (*v1.SecurityPolicyS
 	return &o, nil
 }
 
-// Create  creates a new policy using the def object
+// Create creates a new policy using the def object
 func (p SecurityPolicy) Create(ctx context.Context, def *v1.SecurityPolicySpec) error {
 	res, err := client.PostJSON(ctx, client.Join(endpointPolicies), def)
 	if err != nil {
@@ -70,7 +70,12 @@ func (p SecurityPolicy) Create(ctx context.Context, def *v1.SecurityPolicySpec) 
 
 	switch strings.ToLower(msg.Status) {
 	case "ok":
-		def.MID = msg.Message
+		if def.MID == nil {
+			def.MID = new(string)
+		}
+
+		*def.MID = msg.Message
+
 		return nil
 	default:
 		return client.Error(res)
@@ -79,7 +84,11 @@ func (p SecurityPolicy) Create(ctx context.Context, def *v1.SecurityPolicySpec) 
 
 // Update updates a resource object def
 func (p SecurityPolicy) Update(ctx context.Context, def *v1.SecurityPolicySpec) error {
-	res, err := client.PutJSON(ctx, client.Join(endpointPolicies, def.MID), def)
+	if def.MID == nil || *def.MID == "" {
+		return client.ErrMissingPolicyID
+	}
+
+	res, err := client.PutJSON(ctx, client.Join(endpointPolicies, *def.MID), def)
 	if err != nil {
 		return err
 	}

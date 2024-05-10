@@ -17,12 +17,6 @@ import (
 	"sigs.k8s.io/e2e-framework/pkg/features"
 )
 
-const (
-	testApiDef       = "test-http"
-	testOperatorCtx  = "mycontext"
-	gatewayLocalhost = "http://localhost:7000"
-)
-
 func TestOperatorContextCreate(t *testing.T) {
 	listenPath := "/test-opctx"
 
@@ -36,21 +30,24 @@ func TestOperatorContextCreate(t *testing.T) {
 			eval.NoErr(err) // failed to create operatorcontext
 
 			// create api definition
-			_, err = createTestAPIDef(ctx, testNS, func(apiDef *v1alpha1.ApiDefinition) {
+			_, err = createTestAPIDef(ctx, envConf, testNS, func(apiDef *v1alpha1.ApiDefinition) {
+				namespace := opCtx.Namespace
 				apiDef.Spec.Context = &model.Target{
 					Name:      opCtx.Name,
-					Namespace: opCtx.Namespace,
+					Namespace: &namespace,
 				}
-				apiDef.Spec.Proxy.ListenPath = listenPath
-			}, envConf)
+				apiDef.Spec.Proxy.ListenPath = &listenPath
+			})
 			eval.NoErr(err) // failed to create apiDefinition
 
 			// create api definition with empty namespace for contextRef
-			_, err = createTestAPIDef(ctx, testNS, func(apiDef *v1alpha1.ApiDefinition) {
+			_, err = createTestAPIDef(ctx, envConf, testNS, func(apiDef *v1alpha1.ApiDefinition) {
+				listenPath := "/empty-ns"
+
 				apiDef.Name = "empty-ns"
 				apiDef.Spec.Context = &model.Target{Name: opCtx.Name}
-				apiDef.Spec.Proxy.ListenPath = "/empty-ns"
-			}, envConf)
+				apiDef.Spec.Proxy.ListenPath = &listenPath
+			})
 
 			eval.NoErr(err) // failed to create apiDefinition
 
@@ -70,11 +67,15 @@ func TestOperatorContextCreate(t *testing.T) {
 					// only one apidef will get linked
 					// other one has empty namespace
 					if len(operatCtx.Status.LinkedApiDefinitions) != 1 {
+						t.Log("Length of operator status =", len(operatCtx.Status.LinkedApiDefinitions))
+						t.Log("Linked API Definition =", operatCtx.Status.LinkedApiDefinitions)
 						return false
 					}
 
-					if operatCtx.Status.LinkedApiDefinitions[0].Namespace != testNS ||
+					if !operatCtx.Status.LinkedApiDefinitions[0].NamespaceMatches(testNS) ||
 						operatCtx.Status.LinkedApiDefinitions[0].Name != testApiDef {
+						t.Logf("Namespace of linked API Definition = %s and in the status %s",
+							testNS, *operatCtx.Status.LinkedApiDefinitions[0].Namespace)
 						return false
 					}
 
@@ -144,12 +145,13 @@ func TestOperatorContextDelete(t *testing.T) {
 			ctx = context.WithValue(ctx, ctxOpCtxName, operatorCtx.Name)
 
 			// create api definition
-			def, err := createTestAPIDef(ctx, testNS, func(apiDef *v1alpha1.ApiDefinition) {
+			def, err := createTestAPIDef(ctx, envConf, testNS, func(apiDef *v1alpha1.ApiDefinition) {
+				namespace := operatorCtx.Namespace
 				apiDef.Spec.Context = &model.Target{
 					Name:      operatorCtx.Name,
-					Namespace: operatorCtx.Namespace,
+					Namespace: &namespace,
 				}
-			}, envConf)
+			})
 			eval.NoErr(err) // failed to create apiDefinition
 
 			ctx = context.WithValue(ctx, ctxApiName, def.Name)
@@ -197,7 +199,14 @@ func TestOperatorContextDelete(t *testing.T) {
 				apiDef := v1alpha1.ApiDefinition{ObjectMeta: metav1.ObjectMeta{Name: apiDefName, Namespace: testNS}}
 				opCtx := v1alpha1.OperatorContext{ObjectMeta: metav1.ObjectMeta{Name: opCtxName, Namespace: testNS}}
 
-				err := client.Resources(testNS).Delete(ctx, &apiDef)
+				err := wait.For(func() (done bool, err error) {
+					err = client.Resources(testNS).Delete(ctx, &apiDef)
+					if err != nil {
+						t.Logf("failed to delete ApiDefinition , err: %v", err)
+						return false, nil
+					}
+					return true, nil
+				})
 				eval.NoErr(err)
 
 				err = wait.For(conditions.New(client.Resources()).ResourceDeleted(&opCtx),
@@ -220,12 +229,13 @@ func TestOperatorContextDelete(t *testing.T) {
 			ctx = context.WithValue(ctx, ctxOpCtxName, operatorCtx.Name)
 
 			// create api definition
-			def, err := createTestAPIDef(ctx, testNS, func(apiDef *v1alpha1.ApiDefinition) {
+			def, err := createTestAPIDef(ctx, envConf, testNS, func(apiDef *v1alpha1.ApiDefinition) {
+				namespace := operatorCtx.Namespace
 				apiDef.Spec.Context = &model.Target{
 					Name:      operatorCtx.Name,
-					Namespace: operatorCtx.Namespace,
+					Namespace: &namespace,
 				}
-			}, envConf)
+			})
 			eval.NoErr(err) // failed to create apiDefinition
 
 			ctx = context.WithValue(ctx, ctxApiName, def.Name)

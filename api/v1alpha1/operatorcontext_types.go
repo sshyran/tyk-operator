@@ -100,6 +100,7 @@ type OperatorContextStatus struct {
 //+kubebuilder:subresource:status
 
 // OperatorContext is the Schema for the operatorcontexts API
+// +kubebuilder:resource:categories=tyk
 type OperatorContext struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
@@ -125,7 +126,7 @@ func init() {
 
 func removeLinkedResource(target model.Target, from []model.Target) []model.Target {
 	for i, item := range from {
-		if item.Namespace == target.Namespace && item.Name == target.Name {
+		if item.Equal(target) {
 			from = append(from[:i], from[i+1:]...)
 
 			return from

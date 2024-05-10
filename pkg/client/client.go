@@ -15,19 +15,27 @@ import (
 	"strings"
 	"time"
 
+	errors2 "github.com/pkg/errors"
+
 	"github.com/TykTechnologies/tyk-operator/api/model"
 	"github.com/TykTechnologies/tyk-operator/api/v1alpha1"
-	"github.com/TykTechnologies/tyk-operator/pkg/environmet"
+	"github.com/TykTechnologies/tyk-operator/pkg/environment"
 	"github.com/go-logr/logr"
 )
 
-// ErrTODO is returned when a feature is not yet implemented
-var ErrTODO = errors.New("TODO: This feature is not implemented yet")
-
-// ErrNotFound is returned when an api call returns 404
 var (
+	// ErrTODO is returned when a feature is not yet implemented
+	ErrTODO = errors.New("TODO: This feature is not implemented yet")
+
+	// ErrNotFound is returned when an api call returns 404
 	ErrNotFound = errors.New("Resource not found")
-	ErrFailed   = errors.New("Failed api call")
+
+	// ErrFailed represents errors occurred during API calls to Tyk.
+	ErrFailed = errors.New("Failed api call")
+
+	ErrMissingAPIID = errors.New("Missing API ID")
+
+	ErrMissingPolicyID = errors.New("Missing Policy ID")
 )
 
 func IsTODO(err error) bool {
@@ -80,7 +88,7 @@ func Do(r *http.Request) (*http.Response, error) {
 
 // Context information needed to make a successful http api call.
 type Context struct {
-	Env           environmet.Env
+	Env           environment.Env
 	Log           logr.Logger
 	BeforeRequest func(*http.Request)
 	Do            func(*http.Request) (*http.Response, error)
@@ -90,6 +98,16 @@ type contextKey struct{}
 
 func SetContext(ctx context.Context, rctx Context) context.Context {
 	return context.WithValue(ctx, contextKey{}, rctx)
+}
+
+func GetTykMode(ctx context.Context) environment.Env {
+	if c := ctx.Value(contextKey{}); c != nil {
+		if a, ok := c.(Context); ok {
+			return a.Env
+		}
+	}
+
+	return environment.Env{}
 }
 
 func GetContext(ctx context.Context) Context {
@@ -198,11 +216,20 @@ func Call(ctx context.Context, method, url string, body io.Reader, fn ...func(*h
 			rctx.Log.Info(http.StatusText(res.StatusCode), "body", string(b))
 		}
 
+		errString := string(b)
+		result := model.Result{}
+
+		err = json.Unmarshal(b, &result)
+		if err == nil {
+			result.StatusCode = res.StatusCode
+			errString = result.String()
+		}
+
 		switch res.StatusCode {
 		case http.StatusNotFound:
 			return nil, ErrNotFound
 		default:
-			return nil, ErrFailed
+			return nil, errors2.Wrap(ErrFailed, errString)
 		}
 	}
 
@@ -252,7 +279,7 @@ func Error(res *http.Response) error {
 	return fmt.Errorf("%d API call failed with %v", res.StatusCode, string(b))
 }
 
-// JoinURL returns addition of  parts to the base e.URL
+// JoinURL returns addition of parts to the base e.URL
 func JoinURL(base string, parts ...string) string {
 	return Join(append([]string{base}, parts...)...)
 }

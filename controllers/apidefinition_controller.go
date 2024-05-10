@@ -21,6 +21,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -29,18 +30,20 @@ import (
 	"github.com/TykTechnologies/tyk-operator/api/model"
 	tykv1alpha1 "github.com/TykTechnologies/tyk-operator/api/v1alpha1"
 	"github.com/TykTechnologies/tyk-operator/pkg/cert"
+	tykClient "github.com/TykTechnologies/tyk-operator/pkg/client"
 	"github.com/TykTechnologies/tyk-operator/pkg/client/klient"
-	"github.com/TykTechnologies/tyk-operator/pkg/environmet"
+	"github.com/TykTechnologies/tyk-operator/pkg/environment"
 	"github.com/TykTechnologies/tyk-operator/pkg/keys"
 	"github.com/go-logr/logr"
-
 	v1 "k8s.io/api/core/v1"
 	netv1 "k8s.io/api/networking/v1"
 	k8sErrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -65,7 +68,7 @@ type ApiDefinitionReconciler struct {
 	client.Client
 	Log      logr.Logger
 	Scheme   *runtime.Scheme
-	Env      environmet.Env
+	Env      environment.Env
 	Recorder record.EventRecorder
 }
 
@@ -93,7 +96,7 @@ func (r *ApiDefinitionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	desired.DeepCopyInto(upstreamRequestStruct)
 
 	// set context for all api calls inside this reconciliation loop
-	env, ctx, err := HttpContext(ctx, r.Client, r.Env, desired, log)
+	env, ctx, err := HttpContext(ctx, r.Client, &r.Env, desired, log)
 	if err != nil {
 		return ctrl.Result{}, err
 	}
@@ -109,6 +112,13 @@ func (r *ApiDefinitionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 		log.Info("Synced template", "template", desired.Name)
 
+		desired.Status.OrgID = env.Org
+
+		if err := r.Status().Update(ctx, desired); err != nil {
+			log.Info("Failed to update template ApiDefinition status")
+			return ctrl.Result{}, err
+		}
+
 		return ctrl.Result{}, nil
 	}
 
@@ -121,12 +131,14 @@ func (r *ApiDefinitionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			return err
 		}
 
-		if desired.Spec.APIID == "" {
-			upstreamRequestStruct.Spec.APIID = EncodeNS(req.NamespacedName.String())
+		if desired.Spec.APIID == nil || *desired.Spec.APIID == "" {
+			apiID := EncodeNS(req.NamespacedName.String())
+			upstreamRequestStruct.Spec.APIID = &apiID
 		}
 
-		if desired.Spec.OrgID == "" {
-			upstreamRequestStruct.Spec.OrgID = env.Org
+		if desired.Spec.OrgID == nil || *desired.Spec.OrgID == "" {
+			orgID := env.Org
+			upstreamRequestStruct.Spec.OrgID = &orgID
 		}
 
 		util.AddFinalizer(desired, keys.ApiDefFinalizerName)
@@ -134,14 +146,18 @@ func (r *ApiDefinitionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		if err := r.processCertificateReferences(ctx, &env, log, upstreamRequestStruct); err != nil {
 			return err
 		}
+		desired.Spec.Certificates = upstreamRequestStruct.Spec.Certificates
 
 		r.processUpstreamCertificateReferences(ctx, &env, log, upstreamRequestStruct)
+		desired.Spec.UpstreamCertificates = upstreamRequestStruct.Spec.UpstreamCertificates
 
 		// Check Pinned Public keys
 		r.processPinnedPublicKeyReferences(ctx, &env, log, upstreamRequestStruct)
+		desired.Spec.PinnedPublicKeys = upstreamRequestStruct.Spec.PinnedPublicKeys
 
-		if desired.Spec.UseMutualTLSAuth {
+		if desired.Spec.UseMutualTLSAuth != nil && *desired.Spec.UseMutualTLSAuth {
 			r.processClientCertificateReferences(ctx, &env, log, upstreamRequestStruct)
+			desired.Spec.ClientCertificates = upstreamRequestStruct.Spec.ClientCertificates
 		}
 
 		// Check GraphQL Federation
@@ -153,7 +169,9 @@ func (r *ApiDefinitionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 					return err
 				}
 
-				desired.Spec.GraphQL.Schema = upstreamRequestStruct.Spec.GraphQL.Schema
+				desired.Spec.GraphQL.Schema = new(string)
+
+				*desired.Spec.GraphQL.Schema = *upstreamRequestStruct.Spec.GraphQL.Schema
 				desired.Spec.GraphQL.Subgraph.SDL = upstreamRequestStruct.Spec.GraphQL.Subgraph.SDL
 			case model.SuperGraphExecutionMode:
 				err = r.processSuperGraphExec(ctx, upstreamRequestStruct)
@@ -161,8 +179,11 @@ func (r *ApiDefinitionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 					return err
 				}
 
-				desired.Spec.GraphQL.Schema = upstreamRequestStruct.Spec.GraphQL.Schema
-				desired.Spec.GraphQL.Supergraph.MergedSDL = upstreamRequestStruct.Spec.GraphQL.Supergraph.MergedSDL
+				desired.Spec.GraphQL.Schema = new(string)
+				desired.Spec.GraphQL.Supergraph.MergedSDL = new(string)
+
+				*desired.Spec.GraphQL.Schema = *upstreamRequestStruct.Spec.GraphQL.Schema
+				*desired.Spec.GraphQL.Supergraph.MergedSDL = *upstreamRequestStruct.Spec.GraphQL.Supergraph.MergedSDL
 			}
 		}
 
@@ -191,16 +212,69 @@ func (r *ApiDefinitionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 		//  If this is not set, means it is a new object, set it first
 		if desired.Status.ApiID == "" {
-			return r.create(ctx, upstreamRequestStruct, log)
+			return r.create(ctx, upstreamRequestStruct)
 		}
 
-		return r.update(ctx, upstreamRequestStruct, log)
+		return r.update(ctx, upstreamRequestStruct)
 	})
 
+	var transactionInfo *tykv1alpha1.TransactionInfo
 	if err == nil {
 		log.Info("Completed reconciling ApiDefinition instance")
+
+		transactionInfo = &tykv1alpha1.TransactionInfo{
+			Time:   metav1.Now(),
+			Status: tykv1alpha1.Successful,
+			Error:  "",
+		}
 	} else {
 		queueA = queueAfter
+		transactionInfo = &tykv1alpha1.TransactionInfo{
+			Time:   metav1.Now(),
+			Status: tykv1alpha1.Failed,
+			Error:  err.Error(),
+		}
+	}
+
+	// Reconciler must return the error observed by CreateOrUpdate() function since the mutator given to CreateOrUpdate
+	// returns special custom error such as ErrMultipleLinkSubGraph.
+	errK8s := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		namespace := upstreamRequestStruct.Namespace
+		target := model.Target{Namespace: &namespace, Name: upstreamRequestStruct.Name}
+
+		if desired.Status.ApiID == "" {
+			apiId := ""
+			if upstreamRequestStruct.Spec.APIID != nil {
+				apiId = *upstreamRequestStruct.Spec.APIID
+			}
+
+			apiOnTyk, _ := klient.Universal.Api().Get(ctx, apiId) //nolint:errcheck
+
+			return r.updateStatus(
+				ctx,
+				desired.Namespace,
+				target,
+				true,
+				func(status *tykv1alpha1.ApiDefinitionStatus) {
+					status.ApiID = apiId
+					status.OrgID = env.Org
+					status.LatestTykSpecHash = calculateHash(apiOnTyk)
+					status.LatestCRDSpecHash = calculateHash(upstreamRequestStruct.Spec)
+					status.LatestTransaction = *transactionInfo
+				},
+			)
+		}
+
+		return r.updateStatus(
+			ctx,
+			desired.Namespace,
+			target,
+			true,
+			func(status *tykv1alpha1.ApiDefinitionStatus) { status.LatestTransaction = *transactionInfo },
+		)
+	})
+	if errK8s != nil && err == nil {
+		err = errK8s
 	}
 
 	return ctrl.Result{RequeueAfter: queueA}, err
@@ -208,7 +282,7 @@ func (r *ApiDefinitionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 func (r *ApiDefinitionReconciler) processClientCertificateReferences(
 	ctx context.Context,
-	env *environmet.Env,
+	env *environment.Env,
 	log logr.Logger,
 	upstreamRequestStruct *tykv1alpha1.ApiDefinition,
 ) {
@@ -240,20 +314,20 @@ func (r *ApiDefinitionReconciler) processClientCertificateReferences(
 
 func (r *ApiDefinitionReconciler) processCertificateReferences(
 	ctx context.Context,
-	env *environmet.Env,
+	env *environment.Env,
 	log logr.Logger,
 	upstreamRequestStruct *tykv1alpha1.ApiDefinition,
 ) error {
 	// we support only one certificate secret name for mvp
 	if len(upstreamRequestStruct.Spec.CertificateSecretNames) != 0 {
-		certName := upstreamRequestStruct.Spec.CertificateSecretNames[0]
+		if certName := upstreamRequestStruct.Spec.CertificateSecretNames[0]; certName != "" {
+			tykCertID, err := r.checkSecretAndUpload(ctx, certName, upstreamRequestStruct.Namespace, log, env)
+			if err != nil {
+				return err
+			}
 
-		tykCertID, err := r.checkSecretAndUpload(ctx, certName, upstreamRequestStruct.Namespace, log, env)
-		if err != nil {
-			return err
+			upstreamRequestStruct.Spec.Certificates = []string{tykCertID}
 		}
-
-		upstreamRequestStruct.Spec.Certificates = []string{tykCertID}
 	}
 	// To prevent API object validation failures, set additional properties to nil.
 	upstreamRequestStruct.Spec.CertificateSecretNames = nil
@@ -263,7 +337,7 @@ func (r *ApiDefinitionReconciler) processCertificateReferences(
 
 func (r *ApiDefinitionReconciler) processPinnedPublicKeyReferences(
 	ctx context.Context,
-	env *environmet.Env,
+	env *environment.Env,
 	log logr.Logger,
 	upstreamRequestStruct *tykv1alpha1.ApiDefinition,
 ) {
@@ -295,7 +369,7 @@ func (r *ApiDefinitionReconciler) processPinnedPublicKeyReferences(
 
 func (r *ApiDefinitionReconciler) processUpstreamCertificateReferences(
 	ctx context.Context,
-	env *environmet.Env,
+	env *environment.Env,
 	log logr.Logger,
 	upstreamRequestStruct *tykv1alpha1.ApiDefinition,
 ) {
@@ -360,7 +434,7 @@ func (r *ApiDefinitionReconciler) checkSecretAndUpload(
 	certName string,
 	ns string,
 	log logr.Logger,
-	env *environmet.Env,
+	env *environment.Env,
 ) (string, error) {
 	secret := v1.Secret{}
 
@@ -389,51 +463,110 @@ func (r *ApiDefinitionReconciler) checkSecretAndUpload(
 	return uploadCert(ctx, env.Org, pemKeyBytes, pemCrtBytes)
 }
 
-func (r *ApiDefinitionReconciler) create(
-	ctx context.Context,
-	desired *tykv1alpha1.ApiDefinition,
-	log logr.Logger,
-) error {
-	log.Info("Creating new  ApiDefinition")
+func (r *ApiDefinitionReconciler) create(ctx context.Context, desired *tykv1alpha1.ApiDefinition) error {
+	r.Log.Info("Creating a new ApiDefinition",
+		"ApiDefinition", client.ObjectKeyFromObject(desired).String(),
+	)
 
 	_, err := klient.Universal.Api().Create(ctx, &desired.Spec.APIDefinitionSpec)
 	if err != nil {
-		log.Error(err, "Failed to create api definition")
+		r.Log.Error(
+			err,
+			"Failed to create ApiDefinition on Tyk",
+			"ApiDefinition", client.ObjectKeyFromObject(desired).String(),
+		)
+
 		return err
 	}
 
-	err = r.updateStatus(
-		ctx,
-		desired.Namespace,
-		model.Target{Namespace: desired.Namespace, Name: desired.Name},
-		false,
-		func(status *tykv1alpha1.ApiDefinitionStatus) {
-			status.ApiID = desired.Spec.APIID
-		},
-	)
+	err = klient.Universal.HotReload(ctx)
 	if err != nil {
-		log.Error(err, "Could not update Status ID")
-	}
+		r.Log.Error(
+			err,
+			"Failed to hot-reload Tyk after creating the ApiDefinition",
+			"ApiDefinition", client.ObjectKeyFromObject(desired).String(),
+		)
 
-	klient.Universal.HotReload(ctx)
+		return err
+	}
 
 	return nil
 }
 
-func (r *ApiDefinitionReconciler) update(
-	ctx context.Context,
-	desired *tykv1alpha1.ApiDefinition,
-	log logr.Logger,
-) error {
-	log.Info("Updating ApiDefinition")
+func (r *ApiDefinitionReconciler) update(ctx context.Context, desired *tykv1alpha1.ApiDefinition) error {
+	r.Log.Info("Updating ApiDefinition",
+		"ApiDefinition", client.ObjectKeyFromObject(desired).String(),
+	)
 
-	_, err := klient.Universal.Api().Update(ctx, &desired.Spec.APIDefinitionSpec)
+	apiDefOnTyk, err := klient.Universal.Api().Get(ctx, desired.Status.ApiID)
 	if err != nil {
-		log.Error(err, "Failed to update api definition")
+		if t, ok := err.(*url.Error); ok {
+			r.Log.Info(fmt.Sprintf("Connection error: %s %s: %v", t.Op, t.URL, t.Err))
+			return err
+		}
+
+		_, err = klient.Universal.Api().Create(ctx, &desired.Spec.APIDefinitionSpec)
+		if err != nil {
+			r.Log.Error(
+				err, "Failed to create ApiDefinition on Tyk",
+				"ApiDefinition", client.ObjectKeyFromObject(desired).String(),
+			)
+
+			return err
+		}
+	} else {
+		// If we have same ApiDefinition on Tyk, we do not need to send Update and Hot Reload requests
+		// to Tyk. So, we can simply return to main reconciliation logic.
+		if isSame(desired.Status.LatestTykSpecHash, apiDefOnTyk) && isSame(desired.Status.LatestCRDSpecHash, desired.Spec) {
+			return nil
+		}
+
+		_, err = klient.Universal.Api().Update(ctx, &desired.Spec.APIDefinitionSpec)
+		if err != nil {
+			r.Log.Error(
+				err, "Failed to update ApiDefinition on Tyk",
+				"ApiDefinition", client.ObjectKeyFromObject(desired).String(),
+			)
+
+			return err
+		}
+	}
+
+	err = klient.Universal.HotReload(ctx)
+	if err != nil {
+		r.Log.Error(
+			err,
+			"Failed to hot-reload Tyk after updating the ApiDefinition",
+			"ApiDefinition", client.ObjectKeyFromObject(desired).String(),
+		)
+
 		return err
 	}
 
-	klient.Universal.HotReload(ctx)
+	apiOnTyk, _ := klient.Universal.Api().Get(ctx, *desired.Spec.APIID) //nolint:errcheck
+
+	namespace := desired.Namespace
+	target := model.Target{Namespace: &namespace, Name: desired.Name}
+
+	err = r.updateStatus(
+		ctx,
+		desired.Namespace,
+		target,
+		false,
+		func(status *tykv1alpha1.ApiDefinitionStatus) {
+			status.LatestTykSpecHash = calculateHash(apiOnTyk)
+			status.LatestCRDSpecHash = calculateHash(desired.Spec)
+		},
+	)
+	if err != nil {
+		r.Log.Error(
+			err,
+			"Failed to update Status",
+			"ApiDefinition", client.ObjectKeyFromObject(desired).String(),
+		)
+
+		return err
+	}
 
 	return nil
 }
@@ -466,7 +599,7 @@ func (r *ApiDefinitionReconciler) syncTemplate(ctx context.Context, ns string, a
 
 			if len(refs) > 0 {
 				return ctrl.Result{RequeueAfter: time.Second * 5},
-					fmt.Errorf("Can't delete %s %v depends on it", a.Name, refs)
+					fmt.Errorf("Can't delete %s, Ingress resources %+v depend on it", a.Name, refs)
 			}
 
 			util.RemoveFinalizer(a, keys.ApiDefTemplateFinalizerName)
@@ -518,7 +651,10 @@ func (r *ApiDefinitionReconciler) syncTemplate(ctx context.Context, ns string, a
 }
 
 func (r *ApiDefinitionReconciler) delete(ctx context.Context, desired *tykv1alpha1.ApiDefinition) (time.Duration, error) {
-	r.Log.Info("resource being deleted")
+	r.Log.Info("ApiDefinition being deleted",
+		"ApiDefinition", client.ObjectKeyFromObject(desired).String(),
+	)
+
 	// If our finalizer is present, need to delete from Tyk still
 	if util.ContainsFinalizer(desired, keys.ApiDefFinalizerName) {
 		if err := r.checkLinkedPolicies(ctx, desired); err != nil {
@@ -529,9 +665,10 @@ func (r *ApiDefinitionReconciler) delete(ctx context.Context, desired *tykv1alph
 			return queueAfter, err
 		}
 
+		namespace := desired.Namespace
 		ns := model.Target{
 			Name:      desired.Name,
-			Namespace: desired.Namespace,
+			Namespace: &namespace,
 		}
 
 		for _, target := range desired.Status.LinkedToAPIs {
@@ -545,32 +682,57 @@ func (r *ApiDefinitionReconciler) delete(ctx context.Context, desired *tykv1alph
 
 		err := r.breakSubgraphLink(ctx, desired, true)
 		if err != nil {
-			return 0, err
+			return queueAfter, err
 		}
 
-		r.Log.Info("deleting api")
+		r.Log.Info("Deleting an ApiDefinition from Tyk", "ApiDefinition ID", desired.Status.ApiID)
 
 		_, err = klient.Universal.Api().Delete(ctx, desired.Status.ApiID)
-		if err != nil {
-			r.Log.Error(err, "unable to delete api", "api_id", desired.Status.ApiID)
-			return 0, err
+		if err != nil && tykClient.IsNotFound(err) {
+			r.Log.Info(
+				"Ignoring nonexistent ApiDefinition on delete",
+				"api_id", desired.Status.ApiID,
+				"err", err,
+			)
+		} else if err != nil {
+			// If the ApiDefinition does not exist on Tyk, no need to reconcile with error.
+			// Older versions of GW does not return 404 while deleting non-existent ApiDefinitions.
+			// Therefore, check if ApiDefinition exists on Tyk before returning with error. If ApiDefinition
+			// exists, which means Get call returns successful response, Operator should reconcile to complete
+			// deletion of the ApiDefinition.
+			_, errTyk := klient.Universal.Api().Get(ctx, desired.Status.ApiID)
+			if errTyk == nil {
+				r.Log.Error(
+					err,
+					"Failed to delete ApiDefinition from Tyk", "api_id", desired.Status.ApiID,
+				)
+				return queueAfter, err
+			}
 		}
 
 		err = klient.Universal.HotReload(ctx)
 		if err != nil {
-			r.Log.Error(err, "unable to hot reload", "api_id", desired.Status.ApiID)
-			return 0, err
+			r.Log.Error(
+				err,
+				"Failed to hot-reload Tyk after deleting the ApiDefinition",
+				"ApiDefinition", client.ObjectKeyFromObject(desired).String(),
+			)
+
+			return queueAfter, err
 		}
 
-		r.Log.Info("removing finalizer")
 		util.RemoveFinalizer(desired, keys.ApiDefFinalizerName)
 	}
+
+	r.Log.Info(
+		"Deleted ApiDefinition successfully",
+		"ApiDefinition", client.ObjectKeyFromObject(desired).String(),
+	)
 
 	return 0, nil
 }
 
-// checkLinkedPolicies checks if there are any policies that are still linking
-// to this api definition resource.
+// checkLinkedPolicies checks if there are any policies that are still linking to this api definition resource.
 func (r *ApiDefinitionReconciler) checkLinkedPolicies(ctx context.Context, a *tykv1alpha1.ApiDefinition) error {
 	r.Log.Info("checking linked security policies")
 
@@ -598,8 +760,7 @@ func encodeIfNotBase64(s string) string {
 	return EncodeNS(s)
 }
 
-// updateLinkedPolicies ensure that all policies needed by this api definition are
-// updated.
+// updateLinkedPolicies ensure that all policies needed by this api definition are updated.
 func (r *ApiDefinitionReconciler) updateLinkedPolicies(ctx context.Context, a *tykv1alpha1.ApiDefinition) {
 	r.Log.Info("Updating linked policies")
 
@@ -650,15 +811,16 @@ func (r *ApiDefinitionReconciler) ensureTargets(
 func (r *ApiDefinitionReconciler) updateLoopingTargets(ctx context.Context,
 	a *tykv1alpha1.ApiDefinition, links []model.Target,
 ) error {
-	r.Log.Info("updating looping targets")
+	r.Log.Info("Updating looping targets")
 
 	if len(links) == 0 {
 		return nil
 	}
 
+	namespace := a.Namespace
 	ns := model.Target{
 		Name:      a.Name,
-		Namespace: a.Namespace,
+		Namespace: &namespace,
 	}
 
 	for _, target := range links {
@@ -764,11 +926,14 @@ func (r *ApiDefinitionReconciler) breakSubgraphLink(
 		}
 	}
 
+	namespace := desired.Namespace
+	target := model.Target{Namespace: &namespace, Name: desired.Name}
+
 	if !pass {
 		err = r.updateStatus(
 			ctx,
 			desired.ObjectMeta.Namespace,
-			model.Target{Namespace: desired.Namespace, Name: desired.Name},
+			target,
 			false,
 			func(status *tykv1alpha1.ApiDefinitionStatus) {
 				status.LinkedToSubgraph = ""
@@ -778,7 +943,7 @@ func (r *ApiDefinitionReconciler) breakSubgraphLink(
 		if err != nil {
 			r.Log.Error(err,
 				"failed to update ApiDefinition status after removing Subgraph link",
-				"ApiDefinition CR", client.ObjectKeyFromObject(desired),
+				"ApiDefinition CR", client.ObjectKeyFromObject(desired).String(),
 			)
 
 			return err
@@ -793,7 +958,7 @@ func (r *ApiDefinitionReconciler) processSubGraphExec(ctx context.Context, urs *
 		return nil
 	}
 
-	if urs.Spec.GraphQL.GraphRef == "" {
+	if urs.Spec.GraphQL.GraphRef == nil || *urs.Spec.GraphQL.GraphRef == "" {
 		err := r.breakSubgraphLink(ctx, urs, false)
 		if err != nil {
 			return err
@@ -810,7 +975,7 @@ func (r *ApiDefinitionReconciler) processSubGraphExec(ctx context.Context, urs *
 	subgraph := &tykv1alpha1.SubGraph{}
 	subgraphNamespacedName := types.NamespacedName{
 		Namespace: urs.ObjectMeta.Namespace,
-		Name:      urs.Spec.GraphQL.GraphRef,
+		Name:      *urs.Spec.GraphQL.GraphRef,
 	}
 
 	err := r.Client.Get(ctx, subgraphNamespacedName, subgraph)
@@ -822,7 +987,7 @@ func (r *ApiDefinitionReconciler) processSubGraphExec(ctx context.Context, urs *
 	// and SubGraph CRs. If another ApiDefinition tries to refer to the SubGraph that is already referred by
 	// another ApiDefinition, we should return error to indicate that multiple linking is not allowed.
 	if subgraph.Status.LinkedByAPI != "" &&
-		subgraph.Status.LinkedByAPI != urs.Spec.APIID {
+		subgraph.Status.LinkedByAPI != *urs.Spec.APIID {
 		r.Log.Error(ErrMultipleLinkSubGraph, fmt.Sprintf(
 			"failed to link ApiDefinition CR with SubGraph CR; SubGraph %q is already linked by %s",
 			client.ObjectKeyFromObject(subgraph), subgraph.Status.LinkedByAPI,
@@ -834,24 +999,29 @@ func (r *ApiDefinitionReconciler) processSubGraphExec(ctx context.Context, urs *
 	// If ApiDefinition refers to another Subgraph, the link between the previous Subgraph CR and
 	// ApiDefinition CR must be broken before updating the current ApiDefinition CR based on the new
 	// Subgraph CR.
-	if urs.Status.LinkedToSubgraph != urs.Spec.GraphQL.GraphRef {
+	if urs.Status.LinkedToSubgraph != *urs.Spec.GraphQL.GraphRef {
 		err = r.breakSubgraphLink(ctx, urs, false)
 		if err != nil {
 			return err
 		}
 	}
 
-	urs.Spec.GraphQL.Schema = subgraph.Spec.Schema
+	schema := subgraph.Spec.Schema
+	urs.Spec.GraphQL.Schema = &schema
 	urs.Spec.GraphQL.Subgraph.SDL = subgraph.Spec.SDL
+
+	namespace := urs.Namespace
+	target := model.Target{Namespace: &namespace, Name: urs.Name}
 
 	err = r.updateStatus(
 		ctx,
 		urs.ObjectMeta.Namespace,
-		model.Target{Namespace: urs.Namespace, Name: urs.Name},
+		target,
 		false,
 		func(status *tykv1alpha1.ApiDefinitionStatus) {
 			status.LinkedToSubgraph = subgraph.ObjectMeta.Name
-		})
+		},
+	)
 	if err != nil {
 		r.Log.Error(err,
 			"failed to update ApiDefinition status after adding Subgraph link",
@@ -861,7 +1031,7 @@ func (r *ApiDefinitionReconciler) processSubGraphExec(ctx context.Context, urs *
 		return err
 	}
 
-	subgraph.Status.LinkedByAPI = urs.Spec.APIID
+	subgraph.Status.LinkedByAPI = *urs.Spec.APIID
 
 	err = r.Status().Update(ctx, subgraph)
 	if err != nil {
@@ -877,11 +1047,15 @@ func (r *ApiDefinitionReconciler) processSubGraphExec(ctx context.Context, urs *
 }
 
 func (r *ApiDefinitionReconciler) processSuperGraphExec(ctx context.Context, urs *tykv1alpha1.ApiDefinition) error {
+	if urs.Spec.GraphQL.GraphRef == nil || *urs.Spec.GraphQL.GraphRef == "" {
+		return errors.New("GraphRef is not set")
+	}
+
 	supergraph := &tykv1alpha1.SuperGraph{}
 
 	err := r.Client.Get(ctx, types.NamespacedName{
 		Namespace: urs.Namespace,
-		Name:      urs.Spec.GraphQL.GraphRef,
+		Name:      *urs.Spec.GraphQL.GraphRef,
 	}, supergraph)
 	if err != nil {
 		return err
@@ -889,24 +1063,29 @@ func (r *ApiDefinitionReconciler) processSuperGraphExec(ctx context.Context, urs
 
 	for _, ref := range supergraph.Spec.SubgraphRefs {
 		ns := ref.Namespace
-		if ns == "" {
-			ns = supergraph.Namespace
+
+		if ns == nil || *ns == "" {
+			if ns == nil {
+				ns = new(string)
+			}
+
+			*ns = supergraph.Namespace
 		}
 
 		subGraph := &tykv1alpha1.SubGraph{}
 
 		err := r.Client.Get(ctx, types.NamespacedName{
 			Name:      ref.Name,
-			Namespace: ns,
+			Namespace: *ns,
 		}, subGraph)
 		if err != nil {
 			return err
 		}
 
-		ns, name := decodeID(subGraph.Status.LinkedByAPI)
+		apiNS, apiName := decodeID(subGraph.Status.LinkedByAPI)
 		apiDef := &tykv1alpha1.ApiDefinition{}
 
-		err = r.Client.Get(ctx, types.NamespacedName{Namespace: ns, Name: name}, apiDef)
+		err = r.Client.Get(ctx, types.NamespacedName{Namespace: apiNS, Name: apiName}, apiDef)
 		if err != nil {
 			return err
 		}
@@ -920,8 +1099,11 @@ func (r *ApiDefinitionReconciler) processSuperGraphExec(ctx context.Context, urs
 			})
 	}
 
-	urs.Spec.GraphQL.Schema = supergraph.Spec.Schema
-	urs.Spec.GraphQL.Supergraph.MergedSDL = supergraph.Spec.MergedSDL
+	schema := supergraph.Spec.Schema
+	mergedSDL := supergraph.Spec.MergedSDL
+
+	urs.Spec.GraphQL.Schema = &schema
+	urs.Spec.GraphQL.Supergraph.MergedSDL = &mergedSDL
 
 	return err
 }
@@ -967,17 +1149,18 @@ func (r *ApiDefinitionReconciler) SetupWithManager(mgr ctrl.Manager) error {
 				return nil
 			}
 
-			if apiDefDeployment.Spec.GraphQL.GraphRef == "" {
+			if apiDefDeployment.Spec.GraphQL.GraphRef == nil || *apiDefDeployment.Spec.GraphQL.GraphRef == "" {
 				return nil
 			}
 
-			return []string{apiDefDeployment.Spec.GraphQL.GraphRef}
+			return []string{*apiDefDeployment.Spec.GraphQL.GraphRef}
 		})
 	if err != nil {
 		return err
 	}
 
 	return ctrl.NewControllerManagedBy(mgr).
+		WithEventFilter(predicate.GenerationChangedPredicate{}).
 		For(&tykv1alpha1.ApiDefinition{}).
 		Owns(&v1.Secret{}).
 		Watches(

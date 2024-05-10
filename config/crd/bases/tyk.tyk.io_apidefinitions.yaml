@@ -10,6 +10,8 @@ metadata:
 spec:
   group: tyk.tyk.io
   names:
+    categories:
+    - tyk
     kind: ApiDefinition
     listKind: ApiDefinitionList
     plural: apidefinitions
@@ -31,6 +33,9 @@ spec:
     - jsonPath: .spec.active
       name: Enabled
       type: boolean
+    - jsonPath: .status.latestTransaction.status
+      name: Status
+      type: string
     name: v1alpha1
     schema:
       openAPIV3Schema:
@@ -49,8 +54,8 @@ spec:
           metadata:
             type: object
           spec:
-            description: APIDefinition represents the configuration for a single proxied
-              API and it's versions.
+            description: APIDefinitionSpec represents the configuration for a single
+              proxied API and it's versions.
             properties:
               CORS:
                 properties:
@@ -123,6 +128,21 @@ spec:
                 items:
                   type: string
                 type: array
+              analytics_plugin:
+                description: AnalyticsPlugin is used to configure analytics plugin
+                  which enables editing or removal of all parts of analytics records,
+                  raw request and responses recorded by Tyk at the gateway level
+                nullable: true
+                properties:
+                  enable:
+                    type: boolean
+                  func_name:
+                    type: string
+                  plugin_path:
+                    type: string
+                required:
+                - enable
+                type: object
               api_id:
                 description: 'Only set this field if you are referring to an existing
                   API def. The Operator will use this APIID to link the CR with the
@@ -215,6 +235,17 @@ spec:
                   - auth_header_name
                   type: object
                 type: object
+              base_identity_provided_by:
+                description: BaseIdentityProvidedBy sets Base Identity Provider for
+                  situation when multiple authentication mechanisms are used
+                enum:
+                - auth_token
+                - hmac_key
+                - basic_auth_user
+                - jwt_claim
+                - oidc_user
+                - oauth_key
+                type: string
               blacklisted_ips:
                 description: BlacklistedIPs is a list of IP address that will be blacklisted.This
                   means if origin IP matches any IP in this list a 403 http status
@@ -427,6 +458,9 @@ spec:
                 - location
                 - strip_path
                 type: object
+              detailed_tracing:
+                nullable: true
+                type: boolean
               disable_quota:
                 description: DisableQuota allows you to disable quota middleware in
                   a given API Definition.
@@ -558,9 +592,27 @@ spec:
                           type: object
                         nullable: true
                         type: array
+                      global_headers:
+                        description: GlobalHeaders for managing headers for UDG and
+                          all associated data sources
+                        items:
+                          properties:
+                            key:
+                              description: Key is the name of the request header
+                              type: string
+                            value:
+                              description: Value holds the value of the request header
+                              type: string
+                          required:
+                          - key
+                          - value
+                          type: object
+                        nullable: true
+                        type: array
                     required:
                     - data_sources
                     - field_configs
+                    - global_headers
                     type: object
                   execution_mode:
                     description: GraphQLExecutionMode is the mode to define how an
@@ -640,6 +692,7 @@ spec:
                             headers:
                               additionalProperties:
                                 type: string
+                              nullable: true
                               type: object
                             name:
                               type: string
@@ -824,6 +877,7 @@ spec:
               jwt_signing_method:
                 description: JWTSigningMethod algorithm used to sign jwt token
                 enum:
+                - ""
                 - rsa
                 - hmac
                 - ecdsa
@@ -1105,6 +1159,9 @@ spec:
                   IDs that is used by the Tyk Gateway to provide mTLS support for
                   upstreams
                 type: object
+              use_basic_auth:
+                description: UseBasicAuth enables basic authentication
+                type: boolean
               use_go_plugin_auth:
                 description: Enable Go Plugin Auth. Needs to be combined with "use_keyless:false"
                 type: boolean
@@ -1115,6 +1172,7 @@ spec:
                   requests to).
                 type: boolean
               use_mutual_tls_auth:
+                description: UseMutualTLSAuth enables mututal TLS authentication
                 type: boolean
               use_oauth2:
                 description: UseOAuth2 enables oauth2 authorization
@@ -1840,6 +1898,8 @@ spec:
                             validate_json:
                               items:
                                 properties:
+                                  disabled:
+                                    type: boolean
                                   error_response_code:
                                     description: Allows override of default 422 Unprocessable
                                       Entity response code for validation errors.
@@ -2007,6 +2067,38 @@ spec:
             properties:
               api_id:
                 type: string
+              latestCRDSpecHash:
+                description: LatestCRDSpecHash stores the hash of ApiDefinition CRD
+                  created on K8s. This information is updated after creating or updating
+                  the ApiDefinition. It is useful for Operator to understand running
+                  update operation or not. If there is a change in latestCRDSpecHash
+                  as well as latestTykSpecHash, Operator runs update logic and updates
+                  resources on Tyk Gateway or Tyk Dashboard.
+                type: string
+              latestTransaction:
+                description: TransactionInfo holds information about the status of
+                  object's reconciliation.
+                properties:
+                  error:
+                    description: Error corresponds to the error happened on Tyk API
+                      level, if any.
+                    type: string
+                  status:
+                    description: Status corresponds to the status of the last transaction.
+                    type: string
+                  time:
+                    description: Time corresponds to the time of last transaction.
+                    format: date-time
+                    type: string
+                type: object
+              latestTykSpecHash:
+                description: LatestTykSpecHash stores the hash of ApiDefinition created
+                  on Tyk. This information is updated after creating or updating the
+                  ApiDefinition. It is useful for Operator to understand running update
+                  operation or not. If there is a change in latestTykSpecHash as well
+                  as latestCRDSpecHash, Operator runs update logic and updates resources
+                  on Tyk Gateway or Tyk Dashboard.
+                type: string
               linked_by_apis:
                 description: LinkedByAPIs is a list of ApiDefinition namespaced/name
                   that links to this resource
@@ -2063,6 +2155,10 @@ spec:
                   CR if the ApiDefinition is GraphQL Federation Subgraph. ApiDefinition
                   CR can only be linked to Subgraph CRs that are created in the same
                   namespace as ApiDefinition CR.
+                type: string
+              orgId:
+                description: OrgID corresponds to the Organization ID that this API
+                  belongs to.
                 type: string
             required:
             - api_id
