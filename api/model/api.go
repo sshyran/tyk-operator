@@ -1194,10 +1194,6 @@ type GraphQLConfig struct {
 	Introspection GraphQLIntrospectionConfig `json:"introspection,omitempty"`
 }
 
-type GraphQLIntrospectionConfig struct {
-	Disabled bool `json:"disabled,omitempty"`
-}
-
 type GraphQLProxyConfig struct {
 	// +nullable
 	AuthHeaders map[string]string `json:"auth_headers"`
@@ -1237,6 +1233,10 @@ type StatusCodeTypeNameMapping struct {
 type MappingConfiguration struct {
 	Disabled bool   `json:"disabled"`
 	Path     string `json:"path"`
+}
+
+type GraphQLIntrospectionConfig struct {
+	Disabled bool `json:"disabled,omitempty"`
 }
 
 // GraphQLPlayground represents the configuration for the public playground which will be hosted alongside the api.
